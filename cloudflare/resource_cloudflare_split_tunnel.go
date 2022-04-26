@@ -3,57 +3,22 @@ package cloudflare
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	cloudflare "github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/pkg/errors"
 )
 
 func resourceCloudflareSplitTunnel() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareSplitTunnelSchema(),
 		Read:   resourceCloudflareSplitTunnelRead,
 		Create: resourceCloudflareSplitTunnelUpdate, // Intentionally identical to Update as the resource is always present
 		Update: resourceCloudflareSplitTunnelUpdate,
 		Delete: resourceCloudflareSplitTunnelDelete,
 		Importer: &schema.ResourceImporter{
-			State: schema.ImportStatePassthrough,
-		},
-
-		Schema: map[string]*schema.Schema{
-			"account_id": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"mode": {
-				Type:         schema.TypeString,
-				Required:     true,
-				Description:  "The mode of the split tunnel policy. Either 'include' or 'exclude'.",
-				ValidateFunc: validation.StringInSlice([]string{"include", "exclude"}, false),
-			},
-			"tunnels": {
-				Required: true,
-				Type:     schema.TypeList,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"address": {
-							Type:        schema.TypeString,
-							Optional:    true,
-							Description: "The address for the tunnel.",
-						},
-						"host": {
-							Type:        schema.TypeString,
-							Optional:    true,
-							Description: "The domain name for the tunnel.",
-						},
-						"description": {
-							Type:        schema.TypeString,
-							Optional:    true,
-							Description: "A description for the tunnel.",
-						},
-					},
-				},
-			},
+			State: resourceCloudflareSplitTunnelImport,
 		},
 	}
 }
@@ -111,8 +76,13 @@ func resourceCloudflareSplitTunnelDelete(d *schema.ResourceData, meta interface{
 }
 
 func resourceCloudflareSplitTunnelImport(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
-	accountID := d.Get("account_id").(string)
-	mode := d.Get("mode").(string)
+	attributes := strings.SplitN(d.Id(), "/", 2)
+
+	if len(attributes) != 2 {
+		return nil, fmt.Errorf("invalid id (\"%s\") specified, should be in format \"accountID/mode\"", d.Id())
+	}
+
+	accountID, mode := attributes[0], attributes[1]
 
 	d.Set("mode", mode)
 	d.Set("account_id", accountID)

@@ -8,11 +8,11 @@ import (
 
 	"github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/pkg/errors"
 )
 
 func resourceCloudflareTeamsAccount() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareTeamsAccountSchema(),
 		Read:   resourceCloudflareTeamsAccountRead,
 		Update: resourceCloudflareTeamsAccountUpdate,
 		Create: resourceCloudflareTeamsAccountUpdate,
@@ -21,80 +21,7 @@ func resourceCloudflareTeamsAccount() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			State: resourceCloudflareTeamsAccountImport,
 		},
-
-		Schema: map[string]*schema.Schema{
-			"account_id": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"block_page": {
-				Type:     schema.TypeList,
-				MaxItems: 1,
-				Optional: true,
-				Elem: &schema.Resource{
-					Schema: blockPageSchema,
-				},
-			},
-			"antivirus": {
-				Type:     schema.TypeList,
-				MaxItems: 1,
-				Optional: true,
-				Elem: &schema.Resource{
-					Schema: antivirusSchema,
-				},
-			},
-			"tls_decrypt_enabled": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"activity_log_enabled": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-		},
 	}
-}
-
-var blockPageSchema = map[string]*schema.Schema{
-	"enabled": {
-		Type:     schema.TypeBool,
-		Optional: true,
-	},
-	"footer_text": {
-		Type:     schema.TypeString,
-		Optional: true,
-	},
-	"header_text": {
-		Type:     schema.TypeString,
-		Optional: true,
-	},
-	"logo_path": {
-		Type:     schema.TypeString,
-		Optional: true,
-	},
-	"background_color": {
-		Type:     schema.TypeString,
-		Optional: true,
-	},
-	"name": {
-		Type:     schema.TypeString,
-		Optional: true,
-	},
-}
-
-var antivirusSchema = map[string]*schema.Schema{
-	"enabled_download_phase": {
-		Type:     schema.TypeBool,
-		Required: true,
-	},
-	"enabled_upload_phase": {
-		Type:     schema.TypeBool,
-		Required: true,
-	},
-	"fail_closed": {
-		Type:     schema.TypeBool,
-		Required: true,
-	},
 }
 
 func resourceCloudflareTeamsAccountRead(d *schema.ResourceData, meta interface{}) error {
@@ -108,32 +35,63 @@ func resourceCloudflareTeamsAccountRead(d *schema.ResourceData, meta interface{}
 			d.SetId("")
 			return nil
 		}
-		return fmt.Errorf("error finding Teams Account config %q: %s", d.Id(), err)
+		return fmt.Errorf("error finding Teams Account config %q: %w", d.Id(), err)
 	}
 
 	if configuration.Settings.BlockPage != nil {
 		if err := d.Set("block_page", flattenBlockPageConfig(configuration.Settings.BlockPage)); err != nil {
-			return errors.Wrap(err, "error parsing account block page config")
+			return fmt.Errorf("error parsing account block page config: %w", err)
 		}
 	}
 
 	if configuration.Settings.Antivirus != nil {
 		if err := d.Set("antivirus", flattenAntivirusConfig(configuration.Settings.Antivirus)); err != nil {
-			return errors.Wrap(err, "error parsing account antivirus config")
+			return fmt.Errorf("error parsing account antivirus config: %w", err)
 		}
 	}
 
 	if configuration.Settings.TLSDecrypt != nil {
 		if err := d.Set("tls_decrypt_enabled", configuration.Settings.TLSDecrypt.Enabled); err != nil {
-			return errors.Wrap(err, "error parsing account tls decrypt enablement")
+			return fmt.Errorf("error parsing account tls decrypt enablement: %w", err)
 		}
 	}
 
-	if configuration.Settings.ActivityLog != nil {
-		if err := d.Set("activity_log_enabled", configuration.Settings.ActivityLog.Enabled); err != nil {
-			return errors.Wrap(err, "error parsing account activity log enablement")
+	if err := d.Set("activity_log_enabled", configuration.Settings.ActivityLog.Enabled); err != nil {
+		return fmt.Errorf("error parsing account activity log enablement: %w", err)
+	}
+
+	if configuration.Settings.FIPS != nil {
+		if err := d.Set("fips", flattenFIPSConfig(configuration.Settings.FIPS)); err != nil {
+			return fmt.Errorf("error parsing account FIPS config: %w", err)
 		}
 	}
+
+	if configuration.Settings.BrowserIsolation != nil {
+		if err := d.Set("url_browser_isolation_enabled", configuration.Settings.BrowserIsolation.UrlBrowserIsolationEnabled); err != nil {
+			return fmt.Errorf("error parsing account url browser isolation enablement: %w", err)
+		}
+	}
+
+	logSettings, err := client.TeamsAccountLoggingConfiguration(context.Background(), accountID)
+	if err != nil {
+		return fmt.Errorf("error finding Teams Account log settings %q: %w", d.Id(), err)
+	}
+
+	if logSettings.LoggingSettingsByRuleType != nil {
+		if err := d.Set("logging", flattenTeamsLoggingSettings(&logSettings)); err != nil {
+			return fmt.Errorf("error parsing teams account log settings: %w", err)
+		}
+	}
+
+	deviceSettings, err := client.TeamsAccountDeviceConfiguration(context.Background(), accountID)
+	if err != nil {
+		return fmt.Errorf("error finding Teams Account device settings %q: %w", d.Id(), err)
+	}
+
+	if err := d.Set("proxy", flattenTeamsDeviceSettings(&deviceSettings)); err != nil {
+		return fmt.Errorf("error parsing teams account device settings: %w", err)
+	}
+
 	return nil
 }
 
@@ -141,27 +99,52 @@ func resourceCloudflareTeamsAccountUpdate(d *schema.ResourceData, meta interface
 	client := meta.(*cloudflare.API)
 	accountID := d.Get("account_id").(string)
 	blockPageConfig := inflateBlockPageConfig(d.Get("block_page"))
+	fipsConfig := inflateFIPSConfig(d.Get("fips"))
 	antivirusConfig := inflateAntivirusConfig(d.Get("antivirus"))
+	loggingConfig := inflateLoggingSettings(d.Get("logging"))
+	deviceConfig := inflateDeviceSettings(d.Get("proxy"))
 	updatedTeamsAccount := cloudflare.TeamsConfiguration{
 		Settings: cloudflare.TeamsAccountSettings{
 			Antivirus: antivirusConfig,
 			BlockPage: blockPageConfig,
+			FIPS:      fipsConfig,
 		},
 	}
 
+	//nolint:staticcheck
 	tlsDecrypt, ok := d.GetOkExists("tls_decrypt_enabled")
 	if ok {
 		updatedTeamsAccount.Settings.TLSDecrypt = &cloudflare.TeamsTLSDecrypt{Enabled: tlsDecrypt.(bool)}
 	}
 
+	//nolint:staticcheck
 	activtyLog, ok := d.GetOkExists("activity_log_enabled")
 	if ok {
 		updatedTeamsAccount.Settings.ActivityLog = &cloudflare.TeamsActivityLog{Enabled: activtyLog.(bool)}
 	}
+
+	//nolint:staticcheck
+	browserIsolation, ok := d.GetOkExists("url_browser_isolation_enabled")
+	if ok {
+		updatedTeamsAccount.Settings.BrowserIsolation = &cloudflare.BrowserIsolation{UrlBrowserIsolationEnabled: browserIsolation.(bool)}
+	}
+
 	log.Printf("[DEBUG] Updating Cloudflare Teams Account configuration from struct: %+v", updatedTeamsAccount)
 
 	if _, err := client.TeamsAccountUpdateConfiguration(context.Background(), accountID, updatedTeamsAccount); err != nil {
-		return fmt.Errorf("error updating Teams Account configuration for account %q: %s", accountID, err)
+		return fmt.Errorf("error updating Teams Account configuration for account %q: %w", accountID, err)
+	}
+
+	if loggingConfig != nil {
+		if _, err := client.TeamsAccountUpdateLoggingConfiguration(context.Background(), accountID, *loggingConfig); err != nil {
+			return fmt.Errorf("error updating Teams Account logging settings for account %q: %w", accountID, err)
+		}
+	}
+
+	if deviceConfig != nil {
+		if _, err := client.TeamsAccountDeviceUpdateConfiguration(context.Background(), accountID, *deviceConfig); err != nil {
+			return fmt.Errorf("error updating Teams Account proxy settings for account %q: %w", accountID, err)
+		}
 	}
 
 	d.SetId(accountID)
@@ -185,6 +168,28 @@ func flattenBlockPageConfig(blockPage *cloudflare.TeamsBlockPage) []interface{} 
 		"background_color": blockPage.BackgroundColor,
 		"name":             blockPage.Name,
 	}}
+}
+
+func flattenTeamsLoggingSettings(logSettings *cloudflare.TeamsLoggingSettings) []interface{} {
+	return []interface{}{map[string]interface{}{
+		"redact_pii": logSettings.RedactPii,
+		"settings_by_rule_type": []interface{}{map[string]interface{}{
+			"dns": []interface{}{map[string]bool{
+				"log_all":    logSettings.LoggingSettingsByRuleType[cloudflare.TeamsDnsRuleType].LogAll,
+				"log_blocks": logSettings.LoggingSettingsByRuleType[cloudflare.TeamsDnsRuleType].LogBlocks,
+			}},
+			"http": []interface{}{map[string]bool{
+				"log_all":    logSettings.LoggingSettingsByRuleType[cloudflare.TeamsHttpRuleType].LogAll,
+				"log_blocks": logSettings.LoggingSettingsByRuleType[cloudflare.TeamsHttpRuleType].LogBlocks,
+			}},
+			"l4": []interface{}{map[string]bool{
+				"log_all":    logSettings.LoggingSettingsByRuleType[cloudflare.TeamsL4RuleType].LogAll,
+				"log_blocks": logSettings.LoggingSettingsByRuleType[cloudflare.TeamsL4RuleType].LogBlocks,
+			}},
+		},
+		},
+	},
+	}
 }
 
 func inflateBlockPageConfig(blockPage interface{}) *cloudflare.TeamsBlockPage {
@@ -213,6 +218,13 @@ func flattenAntivirusConfig(antivirusConfig *cloudflare.TeamsAntivirus) []interf
 	}}
 }
 
+func flattenTeamsDeviceSettings(deviceSettings *cloudflare.TeamsDeviceSettings) []interface{} {
+	return []interface{}{map[string]interface{}{
+		"tcp": deviceSettings.GatewayProxyEnabled,
+		"udp": deviceSettings.GatewayProxyUDPEnabled,
+	}}
+}
+
 func inflateAntivirusConfig(antivirus interface{}) *cloudflare.TeamsAntivirus {
 	avList := antivirus.([]interface{})
 
@@ -225,5 +237,99 @@ func inflateAntivirusConfig(antivirus interface{}) *cloudflare.TeamsAntivirus {
 		EnabledDownloadPhase: avMap["enabled_download_phase"].(bool),
 		EnabledUploadPhase:   avMap["enabled_upload_phase"].(bool),
 		FailClosed:           avMap["fail_closed"].(bool),
+	}
+}
+
+func flattenFIPSConfig(fips *cloudflare.TeamsFIPS) []interface{} {
+	return []interface{}{map[string]interface{}{
+		"tls": fips.TLS,
+	}}
+}
+
+func inflateFIPSConfig(fipsList interface{}) *cloudflare.TeamsFIPS {
+	list := fipsList.([]interface{})
+	if len(list) != 1 {
+		return nil
+	}
+
+	m := list[0].(map[string]interface{})
+	return &cloudflare.TeamsFIPS{
+		TLS: m["tls"].(bool),
+	}
+}
+
+func inflateLoggingSettings(log interface{}) *cloudflare.TeamsLoggingSettings {
+	logList := log.([]interface{})
+
+	if len(logList) != 1 {
+		return nil
+	}
+
+	logSettings, ok := logList[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	logRuleSettingsList, ok := logSettings["settings_by_rule_type"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	logRuleSettings, ok := logRuleSettingsList[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	dnsRuleSettingsList, ok := logRuleSettings["dns"].([]interface{})
+	if !ok {
+		return nil
+	}
+	dnsRuleSettings := dnsRuleSettingsList[0].(map[string]interface{})
+
+	httpRuleSettingsList, ok := logRuleSettings["http"].([]interface{})
+	if !ok {
+		return nil
+	}
+	httpRuleSettings := httpRuleSettingsList[0].(map[string]interface{})
+
+	l4RuleSettingsList, ok := logRuleSettings["l4"].([]interface{})
+	if !ok {
+		return nil
+	}
+	l4RuleSettings := l4RuleSettingsList[0].(map[string]interface{})
+
+	return &cloudflare.TeamsLoggingSettings{
+		LoggingSettingsByRuleType: map[cloudflare.TeamsRuleType]cloudflare.TeamsAccountLoggingConfiguration{
+			cloudflare.TeamsDnsRuleType: {
+				LogAll:    dnsRuleSettings["log_all"].(bool),
+				LogBlocks: dnsRuleSettings["log_blocks"].(bool),
+			},
+			cloudflare.TeamsHttpRuleType: {
+				LogAll:    httpRuleSettings["log_all"].(bool),
+				LogBlocks: httpRuleSettings["log_blocks"].(bool),
+			},
+			cloudflare.TeamsL4RuleType: {
+				LogAll:    l4RuleSettings["log_all"].(bool),
+				LogBlocks: l4RuleSettings["log_blocks"].(bool),
+			},
+		},
+		RedactPii: logSettings["redact_pii"].(bool),
+	}
+}
+
+func inflateDeviceSettings(device interface{}) *cloudflare.TeamsDeviceSettings {
+	deviceList := device.([]interface{})
+
+	if len(deviceList) != 1 {
+		return nil
+	}
+
+	deviceSettings, ok := deviceList[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	return &cloudflare.TeamsDeviceSettings{
+		GatewayProxyEnabled:    deviceSettings["tcp"].(bool),
+		GatewayProxyUDPEnabled: deviceSettings["udp"].(bool),
 	}
 }

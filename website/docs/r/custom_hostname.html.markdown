@@ -29,6 +29,7 @@ The following arguments are supported:
 * `zone_id` - (Required) The DNS zone ID where the custom hostname should be assigned.
 * `hostname` - (Required) Hostname you intend to request a certificate for.
 * `custom_origin_server` - (Optional) The custom origin server used for certificates.
+* `custom_origin_sni` - (Optional) The [custom origin SNI](https://developers.cloudflare.com/ssl/ssl-for-saas/hostname-specific-behavior/custom-origin) used for certificates.
 * `ssl` - (Required) SSL configuration of the certificate. See further notes below.
 
 **ssl** block supports:
@@ -48,6 +49,7 @@ The following arguments are supported:
 * `min_tls_version` - (Optional) Lowest version of TLS this certificate should
   support. Valid values are `"1.0"`, `"1.1"`, `"1.2"` and `"1.3"`.
 * `ciphers` - (Optional) List of SSL/TLS ciphers to associate with this certificate.
+* `early_hints` - (Optional) Whether or not early hints should be supported. Valid values are `"on"` or `"off"`.
 
 ## Attributes Reference
 

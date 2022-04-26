@@ -10,95 +10,18 @@ import (
 
 	"github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func resourceCloudflareApiToken() *schema.Resource {
-	p := schema.Resource{
-		Schema: map[string]*schema.Schema{
-			"resources": {
-				Type:     schema.TypeMap,
-				Required: true,
-				Elem:     &schema.Schema{Type: schema.TypeString},
-			},
-			"permission_groups": {
-				Type:     schema.TypeList,
-				Required: true,
-				Elem:     &schema.Schema{Type: schema.TypeString},
-			},
-			"effect": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Default:      "allow",
-				ValidateFunc: validation.StringInSlice([]string{"allow", "deny"}, false),
-			},
-		},
-	}
 
 	return &schema.Resource{
+		Schema: resourceCloudflareApiTokenSchema(),
 		Create: resourceCloudflareApiTokenCreate,
 		Read:   resourceCloudflareApiTokenRead,
 		Update: resourceCloudflareApiTokenUpdate,
 		Delete: resourceCloudflareApiTokenDelete,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
-		},
-		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"policy": {
-				Type:     schema.TypeSet,
-				Set:      schema.HashResource(&p),
-				Required: true,
-				Elem:     &p,
-			},
-			"condition": {
-				Type:     schema.TypeList,
-				Optional: true,
-				MaxItems: 1,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"request_ip": {
-							Type:     schema.TypeList,
-							Optional: true,
-							MaxItems: 1,
-							Elem: &schema.Resource{
-								Schema: map[string]*schema.Schema{
-									"in": {
-										Type:     schema.TypeList,
-										Elem:     &schema.Schema{Type: schema.TypeString},
-										Optional: true,
-									},
-									"not_in": {
-										Type:     schema.TypeList,
-										Elem:     &schema.Schema{Type: schema.TypeString},
-										Optional: true,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			"value": {
-				Type:      schema.TypeString,
-				Computed:  true,
-				Sensitive: true,
-			},
-			"status": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"issued_on": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"modified_on": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
 		},
 	}
 }
@@ -112,11 +35,11 @@ func buildAPIToken(d *schema.ResourceData) cloudflare.APIToken {
 	ipsIn := []string{}
 	ipsNotIn := []string{}
 	if ips, ok := d.GetOk("condition.0.request_ip.0.in"); ok {
-		ipsIn = expandInterfaceToStringList(ips)
+		ipsIn = expandInterfaceToStringList(ips.(*schema.Set).List())
 	}
 
 	if ips, ok := d.GetOk("condition.0.request_ip.0.not_in"); ok {
-		ipsNotIn = expandInterfaceToStringList(ips)
+		ipsNotIn = expandInterfaceToStringList(ips.(*schema.Set).List())
 	}
 
 	if len(ipsIn) > 0 || len(ipsNotIn) > 0 {
@@ -151,8 +74,6 @@ func resourceCloudflareApiTokenCreate(d *schema.ResourceData, meta interface{}) 
 
 	d.SetId(t.ID)
 	d.Set("status", t.Status)
-	d.Set("issued_on", t.IssuedOn.Format(time.RFC3339Nano))
-	d.Set("modified_on", t.ModifiedOn.Format(time.RFC3339Nano))
 	d.Set("value", t.Value)
 
 	return resourceCloudflareApiTokenRead(d, meta)
@@ -165,7 +86,7 @@ func resourceDataToApiTokenPolices(d *schema.ResourceData) []cloudflare.APIToken
 	for _, p := range policies {
 		policy := p.(map[string]interface{})
 
-		permissionGroups := expandInterfaceToStringList(policy["permission_groups"])
+		permissionGroups := expandInterfaceToStringList(policy["permission_groups"].(*schema.Set).List())
 		if len(permissionGroups) == 0 {
 			continue
 		}
@@ -233,7 +154,7 @@ func resourceCloudflareApiTokenRead(d *schema.ResourceData, meta interface{}) er
 	d.Set("policy", policies)
 	d.Set("status", t.Status)
 	d.Set("issued_on", t.IssuedOn.Format(time.RFC3339Nano))
-	d.Set("modified_on", time.Now().Format(time.RFC3339Nano))
+	d.Set("modified_on", t.ModifiedOn.Format(time.RFC3339Nano))
 
 	var ipIn []string
 	var ipNotIn []string

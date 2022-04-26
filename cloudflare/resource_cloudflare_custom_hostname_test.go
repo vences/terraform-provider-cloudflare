@@ -3,15 +3,57 @@ package cloudflare
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"testing"
 
 	cloudflare "github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
+	"github.com/pkg/errors"
 )
 
-func TestAccCloudflareCustomHostnameBasic(t *testing.T) {
+func init() {
+	resource.AddTestSweepers("cloudflare_custom_hostname", &resource.Sweeper{
+		Name: "cloudflare_custom_hostname",
+		F:    testSweepCloudflareCustomHostnames,
+	})
+}
+
+func testSweepCloudflareCustomHostnames(r string) error {
+	client, clientErr := sharedClient()
+	if clientErr != nil {
+		log.Printf("[ERROR] Failed to create Cloudflare client: %s", clientErr)
+	}
+
+	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
+	if zoneID == "" {
+		return errors.New("CLOUDFLARE_ZONE_ID must be set")
+	}
+
+	hostnames, _, hostnamesErr := client.CustomHostnames(context.Background(), zoneID, 1, cloudflare.CustomHostname{})
+	if hostnamesErr != nil {
+		log.Printf("[ERROR] Failed to fetch Cloudflare custom hostnames: %s", hostnamesErr)
+	}
+
+	if len(hostnames) == 0 {
+		log.Print("[DEBUG] No Cloudflare custom hostnames to sweep")
+		return nil
+	}
+
+	for _, hostname := range hostnames {
+		log.Printf("[INFO] Deleting Cloudflare custom hostname: %s", hostname.ID)
+		err := client.DeleteCustomHostname(context.Background(), zoneID, hostname.ID)
+
+		if err != nil {
+			log.Printf("[ERROR] Failed to delete Cloudflare custom hostname (%s): %s", hostname.Hostname, err)
+		}
+	}
+
+	return nil
+}
+
+func TestAccCloudflareCustomHostname_Basic(t *testing.T) {
 	t.Parallel()
 	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
 	domain := os.Getenv("CLOUDFLARE_DOMAIN")
@@ -50,7 +92,7 @@ resource "cloudflare_custom_hostname" "%[2]s" {
 `, zoneID, rnd, domain)
 }
 
-func TestAccCloudflareCustomHostnameWithCustomOriginServer(t *testing.T) {
+func TestAccCloudflareCustomHostname_WithCustomOriginServer(t *testing.T) {
 	t.Parallel()
 	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
 	domain := os.Getenv("CLOUDFLARE_DOMAIN")
@@ -66,6 +108,7 @@ func TestAccCloudflareCustomHostnameWithCustomOriginServer(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "zone_id", zoneID),
 					resource.TestCheckResourceAttr(resourceName, "hostname", fmt.Sprintf("%s.%s", rnd, domain)),
 					resource.TestCheckResourceAttr(resourceName, "custom_origin_server", fmt.Sprintf("origin.%s.terraform.cfapi.net", rnd)),
+					resource.TestCheckResourceAttr(resourceName, "custom_origin_sni", fmt.Sprintf("origin.%s.terraform.cfapi.net", rnd)),
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.method", "txt"),
 					resource.TestCheckResourceAttrSet(resourceName, "ownership_verification.value"),
 					resource.TestCheckResourceAttrSet(resourceName, "ownership_verification.type"),
@@ -84,6 +127,7 @@ resource "cloudflare_custom_hostname" "%[2]s" {
   zone_id = "%[1]s"
   hostname = "%[2]s.%[3]s"
   custom_origin_server = "origin.%[2]s.terraform.cfapi.net"
+	custom_origin_sni = "origin.%[2]s.terraform.cfapi.net"
   ssl {
     method = "txt"
   }
@@ -98,7 +142,7 @@ resource "cloudflare_record" "%[2]s" {
 }`, zoneID, rnd, domain)
 }
 
-func TestAccCloudflareCustomHostnameWithHTTPValidation(t *testing.T) {
+func TestAccCloudflareCustomHostname_WithHTTPValidation(t *testing.T) {
 	t.Parallel()
 	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
 	domain := os.Getenv("CLOUDFLARE_DOMAIN")
@@ -137,7 +181,7 @@ resource "cloudflare_custom_hostname" "%[2]s" {
 `, zoneID, rnd, domain)
 }
 
-func TestAccCloudflareCustomHostnameWithCustomSSLSettings(t *testing.T) {
+func TestAccCloudflareCustomHostname_WithCustomSSLSettings(t *testing.T) {
 	t.Parallel()
 	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
 	domain := os.Getenv("CLOUDFLARE_DOMAIN")
@@ -155,6 +199,7 @@ func TestAccCloudflareCustomHostnameWithCustomSSLSettings(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.http2", "off"),
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.min_tls_version", "1.2"),
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.ciphers.#", "2"),
+					resource.TestCheckResourceAttr(resourceName, "ssl.0.certificate_authority", "digicert"),
 					resource.TestCheckResourceAttrSet(resourceName, "ownership_verification.value"),
 					resource.TestCheckResourceAttrSet(resourceName, "ownership_verification.type"),
 					resource.TestCheckResourceAttrSet(resourceName, "ownership_verification.name"),
@@ -180,13 +225,14 @@ resource "cloudflare_custom_hostname" "%[2]s" {
         "ECDHE-RSA-AES128-GCM-SHA256",
         "AES128-SHA"
       ]
+      early_hints = "off"
     }
   }
 }
 `, zoneID, rnd, domain)
 }
 
-func TestAccCloudflareCustomHostnameUpdate(t *testing.T) {
+func TestAccCloudflareCustomHostname_Update(t *testing.T) {
 	t.Parallel()
 	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
 	domain := os.Getenv("CLOUDFLARE_DOMAIN")
@@ -204,6 +250,7 @@ func TestAccCloudflareCustomHostnameUpdate(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.http2", "off"),
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.min_tls_version", "1.2"),
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.ciphers.#", "2"),
+					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.early_hints", "off"),
 				),
 			},
 			{
@@ -214,6 +261,7 @@ func TestAccCloudflareCustomHostnameUpdate(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.http2", "off"),
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.min_tls_version", "1.1"),
 					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.ciphers.#", "2"),
+					resource.TestCheckResourceAttr(resourceName, "ssl.0.settings.0.early_hints", "off"),
 				),
 			},
 		},
@@ -234,6 +282,7 @@ resource "cloudflare_custom_hostname" "%[2]s" {
         "ECDHE-RSA-AES128-GCM-SHA256",
         "AES128-SHA"
       ]
+      early_hints = "off"
     }
   }
 }
@@ -248,7 +297,8 @@ resource "cloudflare_custom_hostname" "%[2]s" {
 }
 `, zoneID, rnd, domain)
 }
-func TestAccCloudflareCustomHostnameWithNoSSL(t *testing.T) {
+
+func TestAccCloudflareCustomHostname_WithNoSSL(t *testing.T) {
 	t.Parallel()
 	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
 	domain := os.Getenv("CLOUDFLARE_DOMAIN")
@@ -263,7 +313,7 @@ func TestAccCloudflareCustomHostnameWithNoSSL(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "zone_id", zoneID),
 					resource.TestCheckResourceAttr(resourceName, "hostname", fmt.Sprintf("%s.%s", rnd, domain)),
-					resource.TestCheckNoResourceAttr(resourceName, "ssl"),
+					resource.TestCheckResourceAttr(resourceName, "ssl.#", "0"),
 				),
 			},
 		},
@@ -310,7 +360,7 @@ func TestAccCloudflareCustomHostname_UpdatingZoneForcesNewResource(t *testing.T)
 	})
 }
 
-func TestAccCloudflareCustomHostnameImport(t *testing.T) {
+func TestAccCloudflareCustomHostname_Import(t *testing.T) {
 	t.Parallel()
 
 	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
@@ -333,8 +383,8 @@ func TestAccCloudflareCustomHostnameImport(t *testing.T) {
 				ImportStateVerifyIgnore: []string{
 					"ssl.#",
 					"ssl.0.certificate_authority",
-					"ssl.0.cname_name",
-					"ssl.0.cname_target",
+					"ssl.0.validation_records",
+					"ssl.0.validation_errors",
 					"ssl.0.custom_certificate",
 					"ssl.0.custom_key",
 					"ssl.0.method",

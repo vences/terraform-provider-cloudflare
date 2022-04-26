@@ -2,16 +2,17 @@ package cloudflare
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	cloudflare "github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func resourceCloudflareWAFPackage() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareWAFPackageSchema(),
 		Create: resourceCloudflareWAFPackageCreate,
 		Read:   resourceCloudflareWAFPackageRead,
 		Update: resourceCloudflareWAFPackageUpdate,
@@ -19,35 +20,6 @@ func resourceCloudflareWAFPackage() *schema.Resource {
 
 		Importer: &schema.ResourceImporter{
 			State: resourceCloudflareWAFPackageImport,
-		},
-
-		SchemaVersion: 0,
-		Schema: map[string]*schema.Schema{
-			"package_id": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-
-			"zone_id": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-
-			"sensitivity": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Default:      "high",
-				ValidateFunc: validation.StringInSlice([]string{"high", "medium", "low", "off"}, false),
-			},
-
-			"action_mode": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Default:      "challenge",
-				ValidateFunc: validation.StringInSlice([]string{"simulate", "block", "challenge"}, false),
-			},
 		},
 	}
 }
@@ -60,7 +32,8 @@ func resourceCloudflareWAFPackageRead(d *schema.ResourceData, meta interface{}) 
 
 	pkg, err := client.WAFPackage(context.Background(), zoneID, packageID)
 	if err != nil {
-		if err.(*cloudflare.APIRequestError).InternalErrorCodeIs(1002) {
+		var requestError *cloudflare.RequestError
+		if errors.As(err, &requestError) && sliceContainsInt(requestError.ErrorCodes(), 1002) {
 			d.SetId("")
 			return nil
 		}

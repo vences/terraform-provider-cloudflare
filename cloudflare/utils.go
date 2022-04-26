@@ -84,6 +84,15 @@ func contains(slice []string, item string) bool {
 	return ok
 }
 
+func sliceContainsInt(s []int, e int) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
 func itemExistsInSlice(slice interface{}, item interface{}) bool {
 	s := reflect.ValueOf(slice)
 
@@ -145,6 +154,11 @@ func getAccountIDFromZoneID(d *schema.ResourceData, client *cloudflare.API) (str
 type AccessIdentifier struct {
 	Type  AccessIdentifierType
 	Value string
+}
+
+// Add string representation to consistently print this in log messages.
+func (i AccessIdentifier) String() string {
+	return fmt.Sprintf("%s (%s)", i.Type, i.Value)
 }
 
 // AccessIdentifierType represents the identifier type for access resources

@@ -12,6 +12,7 @@ import (
 
 func resourceCloudflareNotificationPolicy() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareNotificationPolicySchema(),
 		Create: resourceCloudflareNotificationPolicyCreate,
 		Read:   resourceCloudflareNotificationPolicyRead,
 		Update: resourceCloudflareNotificationPolicyUpdate,
@@ -19,78 +20,7 @@ func resourceCloudflareNotificationPolicy() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			State: resourceNotificationPolicyImport,
 		},
-
-		Schema: map[string]*schema.Schema{
-			"account_id": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"name": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"description": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"enabled": {
-				Type:     schema.TypeBool,
-				Required: true,
-			},
-			"alert_type": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"filters": {
-				Type:     schema.TypeMap,
-				Optional: true,
-				Elem: &schema.Schema{
-					Type: schema.TypeList,
-					Elem: schema.TypeString,
-				},
-			},
-			"created": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"modified": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"conditions": {
-				Type:     schema.TypeMap,
-				Optional: true,
-			},
-			"email_integration": {
-				Type:     schema.TypeSet,
-				Optional: true,
-				Elem:     mechanismData,
-			},
-			"webhooks_integration": {
-				Type:     schema.TypeSet,
-				Optional: true,
-				Elem:     mechanismData,
-			},
-			"pagerduty_integration": {
-				Type:     schema.TypeSet,
-				Optional: true,
-				Elem:     mechanismData,
-			},
-		},
 	}
-}
-
-var mechanismData = &schema.Resource{
-	Schema: map[string]*schema.Schema{
-		"id": {
-			Type:     schema.TypeString,
-			Required: true,
-		},
-		"name": {
-			Type:     schema.TypeString,
-			Optional: true,
-		},
-	},
 }
 
 func resourceCloudflareNotificationPolicyCreate(d *schema.ResourceData, meta interface{}) error {
@@ -125,17 +55,23 @@ func resourceCloudflareNotificationPolicyRead(d *schema.ResourceData, meta inter
 	d.Set("enabled", policy.Result.Enabled)
 	d.Set("alert_type", policy.Result.AlertType)
 	d.Set("description", policy.Result.Description)
-	d.Set("filters", policy.Result.Filters)
-	d.Set("conditions", policy.Result.Conditions)
 	d.Set("created", policy.Result.Created.Format(time.RFC3339))
 	d.Set("modified", policy.Result.Modified.Format(time.RFC3339))
+
+	if policy.Result.Filters != nil && len(policy.Result.Filters) > 0 {
+		if err := d.Set("filters", flattenNotificationPolicyFilter(policy.Result.Filters)); err != nil {
+			return fmt.Errorf("failed to set filters: %s", err)
+		}
+	}
 
 	if err := d.Set("email_integration", setNotificationMechanisms(policy.Result.Mechanisms["email"])); err != nil {
 		return fmt.Errorf("failed to set email integration: %s", err)
 	}
+
 	if err := d.Set("pagerduty_integration", setNotificationMechanisms(policy.Result.Mechanisms["pagerduty"])); err != nil {
 		return fmt.Errorf("failed to set pagerduty integration: %s", err)
 	}
+
 	if err := d.Set("webhooks_integration", setNotificationMechanisms(policy.Result.Mechanisms["webhooks"])); err != nil {
 		return fmt.Errorf("failed to set webhooks integration: %s", err)
 	}
@@ -225,14 +161,34 @@ func buildNotificationPolicy(d *schema.ResourceData) cloudflare.NotificationPoli
 	}
 
 	if filters, ok := d.GetOk("filters"); ok {
-		notificationPolicy.Filters = filters.(map[string][]string)
-	}
-
-	if conditions, ok := d.GetOk("conditions"); ok {
-		notificationPolicy.Conditions = conditions.(map[string]interface{})
+		notificationPolicy.Filters = expandNotificationPolicyFilter(filters.([]interface{}))
 	}
 
 	return notificationPolicy
+}
+
+func expandNotificationPolicyFilter(list []interface{}) map[string][]string {
+	filters := make(map[string][]string)
+	for _, listItem := range list {
+		for k, mapItem := range listItem.(map[string]interface{}) {
+			for _, v := range mapItem.(*schema.Set).List() {
+				filters[k] = append(filters[k], v.(string))
+			}
+		}
+	}
+	return filters
+}
+
+func flattenNotificationPolicyFilter(filters map[string][]string) []interface{} {
+	filtersMap := make(map[string]interface{})
+	for k, v := range filters {
+		set := schema.NewSet(schema.HashString, []interface{}{})
+		for _, value := range v {
+			set.Add(value)
+		}
+		filtersMap[k] = set
+	}
+	return []interface{}{filtersMap}
 }
 
 func getNotificationMechanisms(s *schema.Set) []cloudflare.NotificationMechanismData {

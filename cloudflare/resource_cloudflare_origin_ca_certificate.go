@@ -12,53 +12,17 @@ import (
 
 	cloudflare "github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func resourceCloudflareOriginCACertificate() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareOriginCACertificateSchema(),
 		Create: resourceCloudflareOriginCACertificateCreate,
 		Update: resourceCloudflareOriginCACertificateCreate,
 		Read:   resourceCloudflareOriginCACertificateRead,
 		Delete: resourceCloudflareOriginCACertificateDelete,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
-		},
-
-		Schema: map[string]*schema.Schema{
-			"certificate": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"csr": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				ValidateFunc: validateCSR,
-			},
-			"expires_on": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"hostnames": {
-				Type:     schema.TypeSet,
-				Required: true,
-				ForceNew: true,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
-				},
-			},
-			"request_type": {
-				Type:         schema.TypeString,
-				Required:     true,
-				ForceNew:     true,
-				ValidateFunc: validation.StringInSlice([]string{"origin-rsa", "origin-ecc", "keyless-certificate"}, false),
-			},
-			"requested_validity": {
-				Type:         schema.TypeInt,
-				Optional:     true,
-				Computed:     true,
-				ValidateFunc: validation.IntInSlice([]int{7, 30, 90, 365, 730, 1095, 5475}),
-			},
 		},
 	}
 }
@@ -129,18 +93,16 @@ func resourceCloudflareOriginCACertificateRead(d *schema.ResourceData, meta inte
 	d.Set("hostnames", hostnames)
 	d.Set("request_type", cert.RequestType)
 
-	// lazy approach to extracting the date from a known timestamp in order to
-	// `time.Parse` it correctly. Here we are getting the certificate expiry and
-	// calculating the validity as the API doesn't return it yet it is present in
-	// the schema.
-	date := strings.Split(cert.ExpiresOn.Format(time.RFC3339), "T")
-	certDate, _ := time.Parse("2006-01-02", date[0])
-	now := time.Now()
-	duration := certDate.Sub(now)
-	var validityDays int
-	validityDays = int(math.Ceil(duration.Hours() / 24))
+	certBlock, _ := pem.Decode([]byte(cert.Certificate))
+	if certBlock == nil {
+		return fmt.Errorf("error decoding OriginCACertificate %q: %s", certID, err)
+	}
 
-	d.Set("requested_validity", validityDays)
+	x509Cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return fmt.Errorf("error parsing OriginCACertificate %q: %s", certID, err)
+	}
+	d.Set("requested_validity", calculateRequestedValidityFromCertificate(x509Cert))
 
 	return nil
 }
@@ -173,4 +135,30 @@ func validateCSR(v interface{}, k string) (ws []string, errors []error) {
 		errors = append(errors, fmt.Errorf("%q: %s", k, err.Error()))
 	}
 	return
+}
+
+func calculateRequestedValidityFromCertificate(cert *x509.Certificate) int {
+	diff := cert.NotAfter.UTC().Sub(cert.NotBefore.UTC())
+	days := math.Round(diff.Hours() / 24)
+
+	validateDays := []float64{7, 30, 90, 365, 730, 1095, 5475}
+
+	// Find the closest matching requested validity (in days) to avoid possible leap second issue.
+	i := 0
+	d := math.Abs(days - validateDays[i])
+	distanceIdx := i
+	distance := d
+	for i < len(validateDays) {
+		d := math.Abs(validateDays[i] - days)
+		if d == 0 {
+			return int(days)
+		}
+
+		if d < distance {
+			distanceIdx = i
+			distance = d
+		}
+		i++
+	}
+	return int(validateDays[distanceIdx])
 }

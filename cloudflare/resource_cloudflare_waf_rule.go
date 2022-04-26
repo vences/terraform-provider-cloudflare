@@ -2,6 +2,7 @@ package cloudflare
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 
 func resourceCloudflareWAFRule() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareWAFRuleSchema(),
 		Create: resourceCloudflareWAFRuleCreate,
 		Read:   resourceCloudflareWAFRuleRead,
 		Update: resourceCloudflareWAFRuleUpdate,
@@ -18,35 +20,6 @@ func resourceCloudflareWAFRule() *schema.Resource {
 
 		Importer: &schema.ResourceImporter{
 			State: resourceCloudflareWAFRuleImport,
-		},
-
-		SchemaVersion: 0,
-		Schema: map[string]*schema.Schema{
-			"rule_id": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-
-			"zone_id": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-
-			"group_id": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-
-			"package_id": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Computed: true,
-			},
-
-			"mode": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
 		},
 	}
 }
@@ -60,7 +33,8 @@ func resourceCloudflareWAFRuleRead(d *schema.ResourceData, meta interface{}) err
 
 	rule, err := client.WAFRule(context.Background(), zoneID, packageID, ruleID)
 	if err != nil {
-		if err.(*cloudflare.APIRequestError).InternalErrorCodeIs(1002) || err.(*cloudflare.APIRequestError).InternalErrorCodeIs(1004) {
+		var requestError *cloudflare.RequestError
+		if errors.As(err, &requestError) && (sliceContainsInt(requestError.ErrorCodes(), 1002) || sliceContainsInt(requestError.ErrorCodes(), 1004)) {
 			d.SetId("")
 			return nil
 		}

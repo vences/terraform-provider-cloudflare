@@ -11,7 +11,6 @@ import (
 	cloudflare "github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 // we enforce the use of the Cloudflare API 'legacy_id' field until the mapping of plan is fixed in cloudflare-go
@@ -20,92 +19,69 @@ const (
 	planIDPro        = "pro"
 	planIDBusiness   = "business"
 	planIDEnterprise = "enterprise"
+
+	planIDPartnerFree       = "partners_free"
+	planIDPartnerPro        = "partners_pro"
+	planIDPartnerBusiness   = "partners_business"
+	planIDPartnerEnterprise = "partners_enterprise"
 )
 
-// we keep a private map and we will have a function to check and validate the descriptive name from the RatePlan API with the legacy_id
-var idForName = map[string]string{
-	"Free Website":       planIDFree,
-	"Pro Website":        planIDPro,
-	"Business Website":   planIDBusiness,
-	"Enterprise Website": planIDEnterprise,
+type subscriptionData struct {
+	ID, Name, Description string
 }
 
-// maintain a mapping for the subscription API term for rate plans to
-// the one we are expecting end users to use.
-var subscriptionIDOfRatePlans = map[string]string{
-	planIDFree:       "CF_FREE",
-	planIDPro:        "CF_PRO",
-	planIDBusiness:   "CF_BIZ",
-	planIDEnterprise: "CF_ENT",
+var ratePlans = map[string]subscriptionData{
+	planIDFree: {
+		Name:        "CF_FREE",
+		ID:          planIDFree,
+		Description: "Free Website",
+	},
+	planIDPro: {
+		Name:        "CF_PRO_20_20",
+		ID:          planIDPro,
+		Description: "Pro Website",
+	},
+	planIDBusiness: {
+		Name:        "CF_BIZ",
+		ID:          planIDBusiness,
+		Description: "Business Website",
+	},
+	planIDEnterprise: {
+		Name:        "CF_ENT",
+		ID:          planIDEnterprise,
+		Description: "Enterprise Website",
+	},
+	planIDPartnerFree: {
+		Name:        "PARTNERS_FREE",
+		ID:          planIDPartnerFree,
+		Description: "Free Website",
+	},
+	planIDPartnerPro: {
+		Name:        "PARTNERS_PRO",
+		ID:          planIDPartnerPro,
+		Description: "Pro Website",
+	},
+	planIDPartnerBusiness: {
+		Name:        "PARTNERS_BIZ",
+		ID:          planIDPartnerBusiness,
+		Description: "Business Website",
+	},
+	planIDPartnerEnterprise: {
+		Name:        "PARTNERS_ENT",
+		ID:          planIDPartnerEnterprise,
+		Description: "Enterprise Website",
+	},
 }
 
 func resourceCloudflareZone() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareZoneSchema(),
 		Create: resourceCloudflareZoneCreate,
 		Read:   resourceCloudflareZoneRead,
 		Update: resourceCloudflareZoneUpdate,
 		Delete: resourceCloudflareZoneDelete,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
-		},
-
-		Schema: map[string]*schema.Schema{
-			"zone": {
-				Type:             schema.TypeString,
-				Required:         true,
-				ForceNew:         true,
-				DiffSuppressFunc: zoneDiffFunc,
-			},
-			"jump_start": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"paused": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"vanity_name_servers": {
-				Type:     schema.TypeList,
-				Computed: true,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
-				},
-			},
-			"plan": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Computed:     true,
-				ValidateFunc: validation.StringInSlice([]string{planIDFree, planIDPro, planIDBusiness, planIDEnterprise}, false),
-			},
-			"meta": {
-				Type:     schema.TypeMap,
-				Computed: true,
-				Elem: &schema.Schema{
-					Type:     schema.TypeBool,
-					Computed: true,
-				},
-			},
-			"status": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"type": {
-				Type:         schema.TypeString,
-				ValidateFunc: validation.StringInSlice([]string{"full", "partial"}, false),
-				Default:      "full",
-				Optional:     true,
-			},
-			"name_servers": {
-				Type:     schema.TypeList,
-				Computed: true,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
-				},
-			},
-			"verification_key": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
 		},
 	}
 }
@@ -146,6 +122,13 @@ func resourceCloudflareZoneCreate(d *schema.ResourceData, meta interface{}) erro
 		}
 	}
 
+	if ztype, ok := d.GetOk("type"); ok {
+		_, err := client.ZoneSetType(context.Background(), zone.ID, ztype.(string))
+		if err != nil {
+			return fmt.Errorf("error setting type on zone ID %q: %s", zone.ID, err)
+		}
+	}
+
 	return resourceCloudflareZoneRead(d, meta)
 }
 
@@ -168,13 +151,13 @@ func resourceCloudflareZoneRead(d *schema.ResourceData, meta interface{}) error 
 	}
 
 	// In the cases where the zone isn't completely setup yet, we need to
-	// check the `status` field and should it be pending, use the `Name`
+	// check the `status` field and should it be pending, use the `LegacyID`
 	// from `zone.PlanPending` instead to account for paid plans.
 	var plan string
-	if zone.Status == "pending" && zone.PlanPending.Name != "" {
-		plan = zone.PlanPending.Name
+	if zone.Status == "pending" && zone.PlanPending.LegacyID != "" {
+		plan = zone.PlanPending.LegacyID
 	} else {
-		plan = zone.Plan.Name
+		plan = zone.Plan.LegacyID
 	}
 
 	d.Set("paused", zone.Paused)
@@ -184,7 +167,7 @@ func resourceCloudflareZoneRead(d *schema.ResourceData, meta interface{}) error 
 	d.Set("name_servers", zone.NameServers)
 	d.Set("meta", flattenMeta(d, zone.Meta))
 	d.Set("zone", zone.Name)
-	d.Set("plan", planIDForName(plan))
+	d.Set("plan", plan)
 	d.Set("verification_key", zone.VerificationKey)
 
 	return nil
@@ -203,7 +186,15 @@ func resourceCloudflareZoneUpdate(d *schema.ResourceData, meta interface{}) erro
 		_, err := client.ZoneSetPaused(context.Background(), zoneID, paused.(bool))
 
 		if err != nil {
-			return fmt.Errorf("error updating zone_id %q: %s", zoneID, err)
+			return fmt.Errorf("error setting paused for zone ID %q: %s", zoneID, err)
+		}
+	}
+
+	if ztype, ok := d.GetOkExists("type"); ok && d.HasChange("type") {
+		_, err := client.ZoneSetType(context.Background(), zoneID, ztype.(string))
+
+		if err != nil {
+			return fmt.Errorf("error setting type for on zone ID %q: %s", zoneID, err)
 		}
 	}
 
@@ -262,13 +253,13 @@ func setRatePlan(client *cloudflare.API, zoneID, planID string, isNewPlan bool, 
 	if isNewPlan {
 		// A free rate plan is the default so no need to explicitly make another
 		// HTTP call to set it.
-		if subscriptionIDOfRatePlans[planID] != planIDFree {
-			if err := client.ZoneSetPlan(context.Background(), zoneID, subscriptionIDOfRatePlans[planID]); err != nil {
+		if ratePlans[planID].ID != planIDFree {
+			if err := client.ZoneSetPlan(context.Background(), zoneID, ratePlans[planID].Name); err != nil {
 				return fmt.Errorf("error setting plan %s for zone %q: %s", planID, zoneID, err)
 			}
 		}
 	} else {
-		if err := client.ZoneUpdatePlan(context.Background(), zoneID, subscriptionIDOfRatePlans[planID]); err != nil {
+		if err := client.ZoneUpdatePlan(context.Background(), zoneID, ratePlans[planID].Name); err != nil {
 			return fmt.Errorf("error updating plan %s for zone %q: %s", planID, zoneID, err)
 		}
 	}
@@ -276,28 +267,20 @@ func setRatePlan(client *cloudflare.API, zoneID, planID string, isNewPlan bool, 
 	return resource.Retry(d.Timeout(schema.TimeoutCreate), func() *resource.RetryError {
 		zone, _ := client.ZoneDetails(context.Background(), zoneID)
 
-		if zone.Plan.LegacyID != planID {
+		// This is a little confusing but due to the multiple views of
+		// subscriptions, partner plans actually end up "appearing" like regular
+		// rate plans to end users. To ensure we don't get stuck in an endless
+		// loop, we need to compare the "name" of the plan to the "description"
+		// of the rate plan. That way, even if we send `PARTNERS_ENT` to the
+		// subscriptions service, we will compare it in Terraform as
+		// "Enterprise Website" and know that we made the swap and just trust
+		// that the rate plan identifier did the right thing.
+		if zone.Plan.Name != ratePlans[planID].Description {
 			return resource.RetryableError(fmt.Errorf("plan ID change has not yet propagated"))
 		}
 
 		return nil
 	})
-}
-
-func planIDForName(name string) string {
-	if p, ok := idForName[name]; ok {
-		return p
-	}
-	return ""
-}
-
-func planNameForID(id string) string {
-	for k, v := range idForName {
-		if strings.EqualFold(id, v) {
-			return k
-		}
-	}
-	return ""
 }
 
 // zoneDiffFunc is a DiffSuppressFunc that accepts two strings and then converts

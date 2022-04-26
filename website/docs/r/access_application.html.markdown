@@ -52,14 +52,29 @@ The following arguments are supported:
 * `domain` - (Required) The complete URL of the asset you wish to put
   Cloudflare Access in front of. Can include subdomains or paths. Or both.
 * `type` - (Optional) The application type. Defaults to `self_hosted`. Valid
-  values are `self_hosted`, `ssh`, `vnc`, or `file`.
+  values are `self_hosted`, `ssh`, `vnc`, `file` or `bookmark`.
 * `session_duration` - (Optional) How often a user will be forced to
   re-authorise. Must be in the format `"48h"` or `"2h45m"`.
   Valid time units are `ns`, `us` (or `µs`), `ms`, `s`, `m`, `h`. Defaults to `24h`.
 * `cors_headers` - (Optional) CORS configuration for the Access Application. See
   below for reference structure.
 * `allowed_idps` - (Optional) The identity providers selected for the application.
-
+* `auto_redirect_to_identity` - (Optional) Option to skip identity provider
+  selection if only one is configured in allowed_idps. Defaults to `false`
+  (disabled).
+* `enable_binding_cookie` - (Optional) Option to provide increased security against compromised authorization tokens and CSRF attacks by requiring an additional "binding" cookie on requests. Defaults to `false`.
+* `custom_deny_message` - (Optional) Option that returns a custom error message when a user is denied access to the application.
+* `custom_deny_url` - (Optional) Option that redirects to a custom URL when a user is denied access to the application.
+* `app_launcher_visible` - (Optional) Option to show/hide applications in App Launcher. Defaults to `true`.
+* `skip_interstitial` - (Optional) Option to skip the authorization interstitial
+  when using the CLI.
+* `logo_url` - (Optional) Image URL for the logo shown in the app launcher
+  dashboard.
+* `same_site_cookie_attribute` - (Optional) Defines the same-site cookie setting
+  for access tokens. Valid values are `none`, `lax`, and `strict`.
+* `http_only_cookie_attribute` - (Optional) Option to add the `HttpOnly` cookie flag to access tokens.
+* `service_auth_401_redirect` - (Optional) Option to return a 401 status code in
+  service authentication rules on failed requests.
 
 **cors_headers** allows the following:
 
@@ -77,12 +92,6 @@ The following arguments are supported:
   requests.
 * `max_age` - (Optional) Integer representing the maximum time a preflight
   request will be cached.
-* `auto_redirect_to_identity` - (Optional) Option to skip identity provider
-  selection if only one is configured in allowed_idps. Defaults to `false`
-  (disabled).
-* `enable_binding_cookie` - (Optional) Option to provide increased security against compromised authorization tokens and CSRF attacks by requiring an additional "binding" cookie on requests. Defaults to `false`.
-* `custom_deny_message` - (Optional) Option that returns a custom error message when a user is denied access to the application.
-* `custom_deny_url` - (Optional) Option that redirects to a custom URL when a user is denied access to the application.
 
 ## Attributes Reference
 

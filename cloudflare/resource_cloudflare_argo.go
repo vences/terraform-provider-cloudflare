@@ -7,15 +7,12 @@ import (
 
 	"github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/pkg/errors"
 )
 
 func resourceCloudflareArgo() *schema.Resource {
 	return &schema.Resource{
-		// Pointing `Create` to the `Update `method is intentional. Argo
-		// settings are always present, it's just whether or not the value
-		// is "on" or "off".
+		Schema: resourceCloudflareArgoSchema(),
 		Create: resourceCloudflareArgoUpdate,
 		Read:   resourceCloudflareArgoRead,
 		Update: resourceCloudflareArgoUpdate,
@@ -23,29 +20,14 @@ func resourceCloudflareArgo() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			State: resourceCloudflareArgoImport,
 		},
-
-		Schema: map[string]*schema.Schema{
-			"zone_id": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"tiered_caching": {
-				Type:         schema.TypeString,
-				ValidateFunc: validation.StringInSlice([]string{"on", "off"}, false),
-				Optional:     true,
-			},
-			"smart_routing": {
-				Type:         schema.TypeString,
-				ValidateFunc: validation.StringInSlice([]string{"on", "off"}, false),
-				Optional:     true,
-			},
-		},
 	}
 }
 
 func resourceCloudflareArgoRead(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*cloudflare.API)
 	zoneID := d.Get("zone_id").(string)
+	tieredCaching := d.Get("tiered_caching").(string)
+	smartRouting := d.Get("smart_routing").(string)
 
 	log.Printf("[DEBUG] zone ID: %s", zoneID)
 
@@ -53,7 +35,7 @@ func resourceCloudflareArgoRead(d *schema.ResourceData, meta interface{}) error 
 	d.SetId(checksum)
 	d.Set("zone_id", zoneID)
 
-	if _, ok := d.GetOk("tiered_caching"); ok {
+	if tieredCaching != "" {
 		tieredCaching, err := client.ArgoTieredCaching(context.Background(), zoneID)
 		if err != nil {
 			return errors.Wrap(err, "failed to get tiered caching setting")
@@ -62,7 +44,7 @@ func resourceCloudflareArgoRead(d *schema.ResourceData, meta interface{}) error 
 		d.Set("tiered_caching", tieredCaching.Value)
 	}
 
-	if _, ok := d.GetOk("smart_routing"); ok {
+	if smartRouting != "" {
 		smartRouting, err := client.ArgoSmartRouting(context.Background(), zoneID)
 		if err != nil {
 			return errors.Wrap(err, "failed to get smart routing setting")
@@ -124,6 +106,8 @@ func resourceCloudflareArgoImport(d *schema.ResourceData, meta interface{}) ([]*
 	id := stringChecksum(fmt.Sprintf("%s/argo", zoneID))
 	d.SetId(id)
 	d.Set("zone_id", zoneID)
+
+	resourceCloudflareArgoRead(d, meta)
 
 	return []*schema.ResourceData{d}, nil
 }

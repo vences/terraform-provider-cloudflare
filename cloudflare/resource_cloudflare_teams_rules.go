@@ -4,15 +4,17 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func resourceCloudflareTeamsRule() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareTeamsRuleSchema(),
 		Read:   resourceCloudflareTeamsRuleRead,
 		Update: resourceCloudflareTeamsRuleUpdate,
 		Create: resourceCloudflareTeamsRuleCreate,
@@ -20,118 +22,7 @@ func resourceCloudflareTeamsRule() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			State: resourceCloudflareTeamsRuleImport,
 		},
-
-		Schema: map[string]*schema.Schema{
-			"account_id": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"name": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"description": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"precedence": {
-				Type:     schema.TypeInt,
-				Required: true,
-			},
-			"enabled": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"action": {
-				Type:         schema.TypeString,
-				ValidateFunc: validation.StringInSlice(cloudflare.TeamsRulesActionValues(), false),
-				Required:     true,
-			},
-			"filters": {
-				Type:     schema.TypeList,
-				Optional: true,
-				Elem:     &schema.Schema{Type: schema.TypeString},
-			},
-			"traffic": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"identity": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"version": {
-				Type:     schema.TypeInt,
-				Computed: true,
-			},
-			"rule_settings": {
-				Type:     schema.TypeList,
-				MaxItems: 1,
-				Optional: true,
-				Elem: &schema.Resource{
-					Schema: teamsRuleSettings,
-				},
-			},
-		},
 	}
-}
-
-var teamsRuleSettings = map[string]*schema.Schema{
-	"block_page_enabled": {
-		Type:     schema.TypeBool,
-		Optional: true,
-	},
-	"block_page_reason": {
-		Type:     schema.TypeString,
-		Optional: true,
-	},
-	"override_ips": {
-		Type:     schema.TypeList,
-		Optional: true,
-		Elem:     &schema.Schema{Type: schema.TypeString},
-	},
-	"override_host": {
-		Type:     schema.TypeString,
-		Optional: true,
-	},
-	"l4override": {
-		Type:     schema.TypeList,
-		MaxItems: 1,
-		Optional: true,
-		Elem: &schema.Resource{
-			Schema: teamsL4OverrideSettings,
-		},
-	},
-	"biso_admin_controls": {
-		Type:     schema.TypeList,
-		MaxItems: 1,
-		Optional: true,
-		Elem: &schema.Resource{
-			Schema: teamsBisoAdminControls,
-		},
-	},
-}
-
-var teamsL4OverrideSettings = map[string]*schema.Schema{
-	"ip": {
-		Type:     schema.TypeString,
-		Required: true,
-	},
-	"port": {
-		Type:     schema.TypeInt,
-		Required: true,
-	},
-}
-
-var teamsBisoAdminControls = map[string]*schema.Schema{
-	"disable_printing": {
-		Type:     schema.TypeBool,
-		Optional: true,
-	},
-	"disable_copy_paste": {
-		Type:     schema.TypeBool,
-		Optional: true,
-	},
 }
 
 func resourceCloudflareTeamsRuleRead(d *schema.ResourceData, meta interface{}) error {
@@ -171,6 +62,9 @@ func resourceCloudflareTeamsRuleRead(d *schema.ResourceData, meta interface{}) e
 	if err := d.Set("identity", rule.Identity); err != nil {
 		return fmt.Errorf("error parsing rule identity")
 	}
+	if err := d.Set("device_posture", rule.DevicePosture); err != nil {
+		return fmt.Errorf("error parsing rule device_posture")
+	}
 	if err := d.Set("version", int64(rule.Version)); err != nil {
 		return fmt.Errorf("error parsing rule version")
 	}
@@ -192,15 +86,16 @@ func resourceCloudflareTeamsRuleCreate(d *schema.ResourceData, meta interface{})
 	}
 
 	newTeamsRule := cloudflare.TeamsRule{
-		Name:        d.Get("name").(string),
-		Description: d.Get("description").(string),
-		Precedence:  uint64(d.Get("precedence").(int)),
-		Enabled:     d.Get("enabled").(bool),
-		Action:      cloudflare.TeamsGatewayAction(d.Get("action").(string)),
-		Filters:     filters,
-		Traffic:     d.Get("traffic").(string),
-		Identity:    d.Get("identity").(string),
-		Version:     uint64(d.Get("version").(int)),
+		Name:          d.Get("name").(string),
+		Description:   d.Get("description").(string),
+		Precedence:    uint64(d.Get("precedence").(int)),
+		Enabled:       d.Get("enabled").(bool),
+		Action:        cloudflare.TeamsGatewayAction(d.Get("action").(string)),
+		Filters:       filters,
+		Traffic:       d.Get("traffic").(string),
+		Identity:      d.Get("identity").(string),
+		DevicePosture: d.Get("device_posture").(string),
+		Version:       uint64(d.Get("version").(int)),
 	}
 
 	if settings != nil {
@@ -229,16 +124,17 @@ func resourceCloudflareTeamsRuleUpdate(d *schema.ResourceData, meta interface{})
 	}
 
 	teamsRule := cloudflare.TeamsRule{
-		ID:          d.Id(),
-		Name:        d.Get("name").(string),
-		Description: d.Get("description").(string),
-		Precedence:  uint64(d.Get("precedence").(int)),
-		Enabled:     d.Get("enabled").(bool),
-		Action:      cloudflare.TeamsGatewayAction(d.Get("action").(string)),
-		Filters:     filters,
-		Traffic:     d.Get("traffic").(string),
-		Identity:    d.Get("identity").(string),
-		Version:     uint64(d.Get("version").(int)),
+		ID:            d.Id(),
+		Name:          d.Get("name").(string),
+		Description:   d.Get("description").(string),
+		Precedence:    uint64(d.Get("precedence").(int)),
+		Enabled:       d.Get("enabled").(bool),
+		Action:        cloudflare.TeamsGatewayAction(d.Get("action").(string)),
+		Filters:       filters,
+		Traffic:       d.Get("traffic").(string),
+		Identity:      d.Get("identity").(string),
+		DevicePosture: d.Get("device_posture").(string),
+		Version:       uint64(d.Get("version").(int)),
 	}
 
 	if settings != nil {
@@ -292,12 +188,15 @@ func resourceCloudflareTeamsRuleImport(d *schema.ResourceData, meta interface{})
 
 func flattenTeamsRuleSettings(settings *cloudflare.TeamsRuleSettings) []interface{} {
 	return []interface{}{map[string]interface{}{
-		"block_page_enabled":  settings.BlockPageEnabled,
-		"block_page_reason":   settings.BlockReason,
-		"override_ips":        settings.OverrideIPs,
-		"override_host":       settings.OverrideHost,
-		"l4override":          flattenTeamsL4Override(settings.L4Override),
-		"biso_admin_controls": flattenTeamsRuleBisoAdminControls(settings.BISOAdminControls),
+		"block_page_enabled":                 settings.BlockPageEnabled,
+		"block_page_reason":                  settings.BlockReason,
+		"override_ips":                       settings.OverrideIPs,
+		"override_host":                      settings.OverrideHost,
+		"l4override":                         flattenTeamsL4Override(settings.L4Override),
+		"biso_admin_controls":                flattenTeamsRuleBisoAdminControls(settings.BISOAdminControls),
+		"check_session":                      flattenTeamsCheckSessionSettings(settings.CheckSession),
+		"add_headers":                        flattenTeamsAddHeaders(settings.AddHeaders),
+		"insecure_disable_dnssec_validation": settings.InsecureDisableDNSSECValidation,
 	}}
 }
 
@@ -320,13 +219,20 @@ func inflateTeamsRuleSettings(settings interface{}) *cloudflare.TeamsRuleSetting
 
 	bisoAdminControls := inflateTeamsRuleBisoAdminControls(settingsMap["biso_admin_controls"].([]interface{}))
 
+	checkSessionSettings := inflateTeamsCheckSessionSettings(settingsMap["check_session"].([]interface{}))
+	addHeaders := inflateTeamsAddHeaders(settingsMap["add_headers"].(map[string]interface{}))
+	insecureDisableDNSSECValidation := settingsMap["insecure_disable_dnssec_validation"].(bool)
+
 	return &cloudflare.TeamsRuleSettings{
-		BlockPageEnabled:  enabled,
-		BlockReason:       reason,
-		OverrideIPs:       overrideIPs,
-		OverrideHost:      overrideHost,
-		L4Override:        l4Override,
-		BISOAdminControls: bisoAdminControls,
+		BlockPageEnabled:                enabled,
+		BlockReason:                     reason,
+		OverrideIPs:                     overrideIPs,
+		OverrideHost:                    overrideHost,
+		L4Override:                      l4Override,
+		BISOAdminControls:               bisoAdminControls,
+		CheckSession:                    checkSessionSettings,
+		AddHeaders:                      addHeaders,
+		InsecureDisableDNSSECValidation: insecureDisableDNSSECValidation,
 	}
 }
 
@@ -337,6 +243,20 @@ func flattenTeamsRuleBisoAdminControls(settings *cloudflare.TeamsBISOAdminContro
 	return []interface{}{map[string]interface{}{
 		"disable_printing":   settings.DisablePrinting,
 		"disable_copy_paste": settings.DisableCopyPaste,
+		"disable_download":   settings.DisableDownload,
+		"disable_upload":     settings.DisableUpload,
+		"disable_keyboard":   settings.DisableKeyboard,
+	}}
+}
+
+func flattenTeamsCheckSessionSettings(settings *cloudflare.TeamsCheckSessionSettings) []interface{} {
+	if settings == nil {
+		return nil
+	}
+	duration := settings.Duration.Duration.String()
+	return []interface{}{map[string]interface{}{
+		"enforce":  settings.Enforce,
+		"duration": duration,
 	}}
 }
 
@@ -348,10 +268,67 @@ func inflateTeamsRuleBisoAdminControls(settings interface{}) *cloudflare.TeamsBI
 	settingsMap := settingsList[0].(map[string]interface{})
 	disablePrinting := settingsMap["disable_printing"].(bool)
 	disableCopyPaste := settingsMap["disable_copy_paste"].(bool)
+	disableDownload := settingsMap["disable_download"].(bool)
+	disableUpload := settingsMap["disable_upload"].(bool)
+	disableKeyboard := settingsMap["disable_keyboard"].(bool)
 	return &cloudflare.TeamsBISOAdminControlSettings{
 		DisablePrinting:  disablePrinting,
 		DisableCopyPaste: disableCopyPaste,
+		DisableDownload:  disableDownload,
+		DisableUpload:    disableUpload,
+		DisableKeyboard:  disableKeyboard,
 	}
+}
+
+func inflateTeamsCheckSessionSettings(settings interface{}) *cloudflare.TeamsCheckSessionSettings {
+	settingsList := settings.([]interface{})
+	if len(settingsList) != 1 {
+		return nil
+	}
+	settingsMap := settingsList[0].(map[string]interface{})
+	enforce := settingsMap["enforce"].(bool)
+	durationString := settingsMap["duration"].(string)
+
+	dur, err := time.ParseDuration(durationString)
+	if err != nil {
+		return nil
+	}
+
+	duration := cloudflare.Duration{Duration: dur}
+
+	return &cloudflare.TeamsCheckSessionSettings{
+		Enforce:  enforce,
+		Duration: duration,
+	}
+}
+
+func inflateTeamsAddHeaders(settings interface{}) http.Header {
+	settingsMap := settings.(map[string]interface{})
+
+	ret := http.Header{}
+	for key := range settingsMap {
+		v, ok := settingsMap[key].(string)
+		if !ok {
+			continue
+		}
+		s := strings.Split(v, ",")
+		ret[key] = s
+	}
+
+	return ret
+}
+
+func flattenTeamsAddHeaders(settings http.Header) interface{} {
+	if settings == nil {
+		return nil
+	}
+
+	ret := make(map[string]interface{})
+	for name, value := range settings {
+		ret[name] = strings.Join(value[:], ",")
+	}
+
+	return ret
 }
 
 func flattenTeamsL4Override(settings *cloudflare.TeamsL4OverrideSettings) []interface{} {
@@ -362,7 +339,6 @@ func flattenTeamsL4Override(settings *cloudflare.TeamsL4OverrideSettings) []inte
 		"ip":   settings.IP,
 		"port": settings.Port,
 	}}
-
 }
 
 func inflateTeamsL4Override(settings interface{}) *cloudflare.TeamsL4OverrideSettings {

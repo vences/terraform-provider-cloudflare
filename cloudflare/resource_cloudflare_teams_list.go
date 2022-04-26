@@ -8,44 +8,17 @@ import (
 
 	cloudflare "github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func resourceCloudflareTeamsList() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareTeamsListSchema(),
 		Create: resourceCloudflareTeamsListCreate,
 		Read:   resourceCloudflareTeamsListRead,
 		Update: resourceCloudflareTeamsListUpdate,
 		Delete: resourceCloudflareTeamsListDelete,
 		Importer: &schema.ResourceImporter{
 			State: resourceCloudflareTeamsListImport,
-		},
-
-		Schema: map[string]*schema.Schema{
-			"account_id": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"name": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"type": {
-				Type:         schema.TypeString,
-				Required:     true,
-				ValidateFunc: validation.StringInSlice([]string{"SERIAL", "URL", "DOMAIN", "EMAIL"}, false),
-			},
-			"description": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"items": {
-				Type:     schema.TypeList,
-				Optional: true,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
-				},
-			},
 		},
 	}
 }
@@ -59,7 +32,7 @@ func resourceCloudflareTeamsListCreate(d *schema.ResourceData, meta interface{})
 		Description: d.Get("description").(string),
 	}
 
-	itemValues := d.Get("items").([]interface{})
+	itemValues := d.Get("items").(*schema.Set).List()
 	for _, v := range itemValues {
 		newTeamsList.Items = append(newTeamsList.Items, cloudflare.TeamsListItem{Value: v.(string)})
 	}
@@ -129,8 +102,8 @@ func resourceCloudflareTeamsListUpdate(d *schema.ResourceData, meta interface{})
 
 	if d.HasChange("items") {
 		oldItemsIface, newItemsIface := d.GetChange("items")
-		oldItems := expandInterfaceToStringList(oldItemsIface)
-		newItems := expandInterfaceToStringList(newItemsIface)
+		oldItems := oldItemsIface.(*schema.Set).List()
+		newItems := newItemsIface.(*schema.Set).List()
 		patchTeamsList := cloudflare.PatchTeamsList{ID: d.Id()}
 		setListItemDiff(&patchTeamsList, oldItems, newItems)
 		l, err := client.PatchTeamsList(context.Background(), accountID, patchTeamsList)
@@ -180,13 +153,13 @@ func resourceCloudflareTeamsListImport(d *schema.ResourceData, meta interface{})
 	return []*schema.ResourceData{d}, nil
 }
 
-func setListItemDiff(patchList *cloudflare.PatchTeamsList, oldItems []string, newItems []string) {
+func setListItemDiff(patchList *cloudflare.PatchTeamsList, oldItems, newItems []interface{}) {
 	counts := make(map[string]int)
 	for _, val := range newItems {
-		counts[val] += 1
+		counts[val.(string)] += 1
 	}
 	for _, val := range oldItems {
-		counts[val] -= 1
+		counts[val.(string)] -= 1
 	}
 
 	for key, val := range counts {

@@ -10,30 +10,16 @@ import (
 	"github.com/pkg/errors"
 )
 
+const argoTunnelCNAME = "cfargotunnel.com"
+
 func resourceCloudflareArgoTunnel() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareArgoTunnelSchema(),
 		Create: resourceCloudflareArgoTunnelCreate,
 		Read:   resourceCloudflareArgoTunnelRead,
-		Update: resourceCloudflareArgoTunnelUpdate,
 		Delete: resourceCloudflareArgoTunnelDelete,
 		Importer: &schema.ResourceImporter{
 			State: resourceCloudflareArgoTunnelImport,
-		},
-
-		Schema: map[string]*schema.Schema{
-			"account_id": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"name": {
-				Type:     schema.TypeString,
-				Required: true,
-			},
-			"secret": {
-				Type:      schema.TypeString,
-				Required:  true,
-				Sensitive: true,
-			},
 		},
 	}
 }
@@ -55,10 +41,16 @@ func resourceCloudflareArgoTunnelCreate(d *schema.ResourceData, meta interface{}
 }
 
 func resourceCloudflareArgoTunnelRead(d *schema.ResourceData, meta interface{}) error {
-	return nil
-}
+	client := meta.(*cloudflare.API)
+	accID := d.Get("account_id").(string)
 
-func resourceCloudflareArgoTunnelUpdate(d *schema.ResourceData, meta interface{}) error {
+	tunnel, err := client.ArgoTunnel(context.Background(), accID, d.Id())
+	if err != nil {
+		return fmt.Errorf("failed to fetch Argo Tunnel: %w", err)
+	}
+
+	d.Set("cname", fmt.Sprintf("%s.%s", tunnel.ID, argoTunnelCNAME))
+
 	return nil
 }
 
@@ -96,6 +88,7 @@ func resourceCloudflareArgoTunnelImport(d *schema.ResourceData, meta interface{}
 		return nil, errors.Wrap(err, fmt.Sprintf("failed to fetch Argo Tunnel %s", tunnelID))
 	}
 
+	d.Set("account_id", accID)
 	d.Set("name", tunnel.Name)
 	d.SetId(tunnel.ID)
 

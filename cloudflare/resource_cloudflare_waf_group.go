@@ -2,16 +2,17 @@ package cloudflare
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	cloudflare "github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func resourceCloudflareWAFGroup() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareWAFGroupSchema(),
 		Create: resourceCloudflareWAFGroupCreate,
 		Read:   resourceCloudflareWAFGroupRead,
 		Update: resourceCloudflareWAFGroupUpdate,
@@ -19,34 +20,6 @@ func resourceCloudflareWAFGroup() *schema.Resource {
 
 		Importer: &schema.ResourceImporter{
 			State: resourceCloudflareWAFGroupImport,
-		},
-
-		SchemaVersion: 0,
-		Schema: map[string]*schema.Schema{
-			"group_id": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-
-			"zone_id": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-
-			"package_id": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Computed: true,
-			},
-
-			"mode": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Default:      "on",
-				ValidateFunc: validation.StringInSlice([]string{"on", "off"}, false),
-			},
 		},
 	}
 }
@@ -60,7 +33,8 @@ func resourceCloudflareWAFGroupRead(d *schema.ResourceData, meta interface{}) er
 
 	group, err := client.WAFGroup(context.Background(), zoneID, packageID, groupID)
 	if err != nil {
-		if err.(*cloudflare.APIRequestError).InternalErrorCodeIs(1002) || err.(*cloudflare.APIRequestError).InternalErrorCodeIs(1003) {
+		var requestError *cloudflare.RequestError
+		if errors.As(err, &requestError) && (sliceContainsInt(requestError.ErrorCodes(), 1002) || sliceContainsInt(requestError.ErrorCodes(), 1003)) {
 			d.SetId("")
 			return nil
 		}

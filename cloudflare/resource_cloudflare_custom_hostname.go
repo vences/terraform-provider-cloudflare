@@ -9,138 +9,18 @@ import (
 
 	"github.com/cloudflare/cloudflare-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/pkg/errors"
 )
 
 func resourceCloudflareCustomHostname() *schema.Resource {
 	return &schema.Resource{
+		Schema: resourceCloudflareCustomHostnameSchema(),
 		Create: resourceCloudflareCustomHostnameCreate,
 		Read:   resourceCloudflareCustomHostnameRead,
 		Update: resourceCloudflareCustomHostnameUpdate,
 		Delete: resourceCloudflareCustomHostnameDelete,
 		Importer: &schema.ResourceImporter{
 			State: resourceCloudflareCustomHostnameImport,
-		},
-
-		SchemaVersion: 0,
-		Schema: map[string]*schema.Schema{
-			"zone_id": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-			"hostname": {
-				Type:         schema.TypeString,
-				Required:     true,
-				ForceNew:     true,
-				ValidateFunc: validation.StringLenBetween(0, 255),
-			},
-			"custom_origin_server": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"ssl": {
-				Type:     schema.TypeList,
-				Optional: true,
-				Elem: &schema.Resource{
-					SchemaVersion: 1,
-					Schema: map[string]*schema.Schema{
-						"status": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"method": {
-							Type:         schema.TypeString,
-							Optional:     true,
-							ValidateFunc: validation.StringInSlice([]string{"http", "txt", "email"}, false),
-						},
-						"type": {
-							Type:         schema.TypeString,
-							Optional:     true,
-							Default:      "dv",
-							ValidateFunc: validation.StringInSlice([]string{"dv"}, false),
-						},
-						"certificate_authority": {
-							Type:         schema.TypeString,
-							Optional:     true,
-							ValidateFunc: validation.StringInSlice([]string{"lets_encrypt", "digicert"}, false),
-						},
-						"cname_target": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"cname_name": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"wildcard": {
-							Type:     schema.TypeBool,
-							Optional: true,
-						},
-						"custom_certificate": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"custom_key": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"settings": {
-							Type:     schema.TypeList,
-							Optional: true,
-							Computed: true,
-							Elem: &schema.Resource{
-								SchemaVersion: 1,
-								Schema: map[string]*schema.Schema{
-									"http2": {
-										Type:         schema.TypeString,
-										Optional:     true,
-										ValidateFunc: validation.StringInSlice([]string{"on", "off"}, false),
-									},
-									"tls13": {
-										Type:         schema.TypeString,
-										Optional:     true,
-										ValidateFunc: validation.StringInSlice([]string{"on", "off"}, false),
-									},
-									"min_tls_version": {
-										Type:         schema.TypeString,
-										Optional:     true,
-										ValidateFunc: validation.StringInSlice([]string{"1.0", "1.1", "1.2", "1.3"}, false),
-									},
-									"ciphers": {
-										Type:     schema.TypeSet,
-										Optional: true,
-										Elem: &schema.Schema{
-											Type: schema.TypeString,
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			"status": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"ownership_verification": {
-				Type:     schema.TypeMap,
-				Computed: true,
-				Elem: &schema.Schema{
-					Type:     schema.TypeString,
-					Computed: true,
-				},
-			},
-			"ownership_verification_http": {
-				Type:     schema.TypeMap,
-				Computed: true,
-				Elem: &schema.Schema{
-					Type:     schema.TypeString,
-					Computed: true,
-				},
-			},
 		},
 	}
 }
@@ -157,29 +37,54 @@ func resourceCloudflareCustomHostnameRead(d *schema.ResourceData, meta interface
 
 	d.Set("hostname", customHostname.Hostname)
 	d.Set("custom_origin_server", customHostname.CustomOriginServer)
+	d.Set("custom_origin_sni", customHostname.CustomOriginSNI)
 	var sslConfig []map[string]interface{}
 
 	if !reflect.ValueOf(customHostname.SSL).IsNil() {
-		sslConfig = append(sslConfig, map[string]interface{}{
-			"type":               customHostname.SSL.Type,
-			"method":             customHostname.SSL.Method,
-			"wildcard":           customHostname.SSL.Wildcard,
-			"status":             customHostname.SSL.Status,
-			"cname_target":       customHostname.SSL.CnameTarget,
-			"cname_name":         customHostname.SSL.CnameName,
-			"custom_certificate": customHostname.SSL.CustomCertificate,
-			"custom_key":         customHostname.SSL.CustomKey,
+		ssl := map[string]interface{}{
+			"type":                  customHostname.SSL.Type,
+			"method":                customHostname.SSL.Method,
+			"wildcard":              customHostname.SSL.Wildcard,
+			"status":                customHostname.SSL.Status,
+			"certificate_authority": customHostname.SSL.CertificateAuthority,
+			"custom_certificate":    customHostname.SSL.CustomCertificate,
+			"custom_key":            customHostname.SSL.CustomKey,
 			"settings": []map[string]interface{}{{
 				"http2":           customHostname.SSL.Settings.HTTP2,
 				"tls13":           customHostname.SSL.Settings.TLS13,
 				"min_tls_version": customHostname.SSL.Settings.MinTLSVersion,
 				"ciphers":         customHostname.SSL.Settings.Ciphers,
+				"early_hints":     customHostname.SSL.Settings.EarlyHints,
 			}},
-		})
+		}
+		if !reflect.ValueOf(customHostname.SSL.ValidationErrors).IsNil() {
+			errors := []map[string]interface{}{}
+			for _, e := range customHostname.SSL.ValidationErrors {
+				errors = append(errors, map[string]interface{}{"message": e.Message})
+			}
+			ssl["validation_errors"] = errors
+		}
+		if !reflect.ValueOf(customHostname.SSL.ValidationRecords).IsNil() {
+			records := []map[string]interface{}{}
+			for _, e := range customHostname.SSL.ValidationRecords {
+				records = append(records,
+					map[string]interface{}{
+						"cname_name":   e.CnameName,
+						"cname_target": e.CnameTarget,
+						"txt_name":     e.TxtName,
+						"txt_value":    e.TxtValue,
+						"http_body":    e.HTTPBody,
+						"http_url":     e.HTTPUrl,
+						"emails":       e.Emails,
+					})
+			}
+			ssl["validation_records"] = records
+		}
+		sslConfig = append(sslConfig, ssl)
 	}
 
 	if err := d.Set("ssl", sslConfig); err != nil {
-		return fmt.Errorf("failed to see ssl")
+		return fmt.Errorf("failed to set ssl")
 	}
 
 	ownershipVerificationCfg := map[string]interface{}{
@@ -268,22 +173,23 @@ func buildCustomHostname(d *schema.ResourceData) cloudflare.CustomHostname {
 	ch := cloudflare.CustomHostname{
 		Hostname:           d.Get("hostname").(string),
 		CustomOriginServer: d.Get("custom_origin_server").(string),
+		CustomOriginSNI:    d.Get("custom_origin_sni").(string),
 	}
 
 	if _, ok := d.GetOk("ssl"); ok {
 		ch.SSL = &cloudflare.CustomHostnameSSL{
-			Method:            d.Get("ssl.0.method").(string),
-			Type:              d.Get("ssl.0.type").(string),
-			Wildcard:          &[]bool{d.Get("ssl.0.wildcard").(bool)}[0],
-			CnameTarget:       d.Get("ssl.0.cname_target").(string),
-			CnameName:         d.Get("ssl.0.cname_name").(string),
-			CustomCertificate: d.Get("ssl.0.custom_certificate").(string),
-			CustomKey:         d.Get("ssl.0.custom_key").(string),
+			Method:               d.Get("ssl.0.method").(string),
+			Type:                 d.Get("ssl.0.type").(string),
+			Wildcard:             cloudflare.BoolPtr(d.Get("ssl.0.wildcard").(bool)),
+			CustomCertificate:    d.Get("ssl.0.custom_certificate").(string),
+			CustomKey:            d.Get("ssl.0.custom_key").(string),
+			CertificateAuthority: d.Get("ssl.0.certificate_authority").(string),
 			Settings: cloudflare.CustomHostnameSSLSettings{
 				HTTP2:         d.Get("ssl.0.settings.0.http2").(string),
 				TLS13:         d.Get("ssl.0.settings.0.tls13").(string),
 				MinTLSVersion: d.Get("ssl.0.settings.0.min_tls_version").(string),
 				Ciphers:       expandInterfaceToStringList(d.Get("ssl.0.settings.0.ciphers").(*schema.Set).List()),
+				EarlyHints:    d.Get("ssl.0.settings.0.early_hints").(string),
 			},
 		}
 	}
